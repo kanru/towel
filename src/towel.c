@@ -15,9 +15,6 @@
 
 #define DEBUG 0
 
-#define WM_STATE "_NET_WM_STATE"
-#define WM_STATE_FULLSCREEN "_NET_WM_STATE_FULLSCREEN"
-
 /* time in seconds */
 #if DEBUG
 #define REST_TIME (60)
@@ -127,8 +124,9 @@ towel_window_get_atom(towel_window_t *win, const char *atom)
 static void
 towel_window_map(towel_window_t *win)
 {
-  xcb_atom_t wm_state = towel_window_get_atom(win, WM_STATE);
-  xcb_atom_t wm_state_fullscreen = towel_window_get_atom(win, WM_STATE_FULLSCREEN);
+  xcb_atom_t ATOM = towel_window_get_atom(win, "ATOM");
+  xcb_atom_t wm_state = towel_window_get_atom(win, "_NET_WM_STATE");
+  xcb_atom_t wm_state_fullscreen = towel_window_get_atom(win, "_NET_WM_STATE_FULLSCREEN");
 
   xcb_client_message_event_t ev = {
     .response_type = XCB_CLIENT_MESSAGE,
@@ -142,13 +140,9 @@ towel_window_map(towel_window_t *win)
   ev.data.data32[2] = 0;
   ev.data.data32[3] = 1;
 
+  xcb_change_property(win->conn, XCB_PROP_MODE_REPLACE,
+                      win->id, wm_state, ATOM, 8, sizeof(xcb_atom_t), &wm_state_fullscreen);
   xcb_map_window(win->conn, win->id);
-
-  /* From ICCCM "Changing Window State" */
-  xcb_send_event(win->conn, 0, win->screen->root,
-                 XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY |
-                 XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT,
-                 (const char *)&ev);
 }
 
 static void
@@ -283,7 +277,9 @@ main(int argc, char *argv[])
       for (;;) {
         xcb_generic_event_t *event = xcb_wait_for_event(conn);
         if ((event->response_type & ~0x80) == XCB_EXPOSE) {
+#if !DEBUG
           towel_window_grab_input(win);
+#endif
           towel_window_set_background_color(win);
           towel_window_render_time(win, REST_TIME);
           xcb_flush(conn);
