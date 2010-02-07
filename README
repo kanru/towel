@@ -18,3 +18,8 @@ still seems to be clean enough.
 
         [ The Hitchhiker's Guide to the Galaxy,
           by Douglas Adams ]
+
+Towel is aimed to prevent repetitive strain injury (RSI). It monitors
+the X input events and if the operation time exceeds the limit, a
+window is popuped occupying the whole screen, preventing further
+operations thus users are forced to take a break.
