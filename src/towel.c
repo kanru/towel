@@ -1,16 +1,33 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <poll.h>
+#include <unistd.h>
 
 #include <xcb/xcb.h>
 #include <xcb/xcb_aux.h>
+#include <xcb/screensaver.h>
+
 #include <cairo.h>
 #include <cairo-xcb.h>
 
+#define DEBUG 0
+
 #define WM_STATE "_NET_WM_STATE"
 #define WM_STATE_FULLSCREEN "_NET_WM_STATE_FULLSCREEN"
+
+/* time in seconds */
+#if DEBUG
+#define REST_TIME (60)
+#define CHECK_PERIOD (REST_TIME / 2)
+#define WORKING_TIME (60)
+#else
+#define REST_TIME (60*5)
+#define CHECK_PERIOD (REST_TIME / 2)
+#define WORKING_TIME (60*50)
+#endif
 
 struct towel_window_t
 {
@@ -23,19 +40,29 @@ struct towel_window_t
   int16_t y;
   uint16_t width;
   uint16_t height;
+  uint16_t working_time;
+  uint16_t idle_time;
 };
 typedef struct towel_window_t towel_window_t;
+
+static int
+ms2sec(int ms)
+{
+  return ms/1000;
+}
 
 static void
 towel_window_init_cairo(towel_window_t *win)
 {
   xcb_visualtype_t *vt;
 
-  xcb_get_geometry_cookie_t cookie = xcb_get_geometry_unchecked(win->conn, win->id);
+  xcb_get_geometry_cookie_t cookie = xcb_get_geometry_unchecked(win->conn,
+                                                                win->id);
   xcb_get_geometry_reply_t *geo = xcb_get_geometry_reply(win->conn, cookie, NULL);
 
   vt = xcb_aux_find_visual_by_id(win->screen, win->screen->root_visual);
-  win->cs = cairo_xcb_surface_create(win->conn, win->id, vt, geo->width, geo->height);
+  win->cs = cairo_xcb_surface_create(win->conn, win->id,
+                                     vt, geo->width, geo->height);
   win->cr = cairo_create(win->cs);
 
   free(geo);
@@ -45,15 +72,13 @@ static towel_window_t*
 towel_create_window(xcb_connection_t *conn)
 {
   /* Get screen setup and root window */
-  towel_window_t *win = malloc(sizeof(towel_window_t));
+  towel_window_t *win = calloc(1, sizeof(towel_window_t));
   const xcb_setup_t *setup = xcb_get_setup(conn);
   xcb_screen_iterator_t iter = xcb_setup_roots_iterator(setup);
-  xcb_intern_atom_cookie_t atom_cookie;
-  xcb_intern_atom_reply_t *atom;
-  xcb_atom_t wm_state;
-  xcb_atom_t wm_state_fullscreen;
   xcb_get_geometry_cookie_t geo_cookie;
   xcb_get_geometry_reply_t *geo;
+  uint32_t mask = XCB_CW_EVENT_MASK;
+  uint32_t values[] = {XCB_EVENT_MASK_EXPOSURE|XCB_EVENT_MASK_POINTER_MOTION};
 
   win->conn = conn;
   win->screen = iter.data;
@@ -78,18 +103,32 @@ towel_create_window(xcb_connection_t *conn)
                     0,
                     XCB_WINDOW_CLASS_INPUT_OUTPUT,
                     win->screen->root_visual,
-                    0, NULL);
-  xcb_map_window(conn, win->id);
+                    mask, values);
 
-  atom_cookie = xcb_intern_atom_unchecked(conn, 0, strlen(WM_STATE), WM_STATE);
-  atom = xcb_intern_atom_reply(conn, atom_cookie, NULL);
-  wm_state = atom->atom;
-  free(atom);
-  atom_cookie = xcb_intern_atom_unchecked(conn, 0,
-                                          strlen(WM_STATE_FULLSCREEN), WM_STATE_FULLSCREEN);
-  atom = xcb_intern_atom_reply(conn, atom_cookie, NULL);
-  wm_state_fullscreen = atom->atom;
-  free(atom);
+  xcb_flush(conn);
+
+  towel_window_init_cairo(win);
+  return win;
+}
+
+static xcb_atom_t
+towel_window_get_atom(towel_window_t *win, const char *atom)
+{
+  xcb_intern_atom_cookie_t cookie;
+  xcb_intern_atom_reply_t *reply;
+  xcb_atom_t ret;
+  cookie = xcb_intern_atom_unchecked(win->conn, 0, strlen(atom), atom);
+  reply = xcb_intern_atom_reply(win->conn, cookie, NULL);
+  ret = reply->atom;
+  free(reply);
+  return ret;
+}
+
+static void
+towel_window_map(towel_window_t *win)
+{
+  xcb_atom_t wm_state = towel_window_get_atom(win, WM_STATE);
+  xcb_atom_t wm_state_fullscreen = towel_window_get_atom(win, WM_STATE_FULLSCREEN);
 
   xcb_client_message_event_t ev = {
     .response_type = XCB_CLIENT_MESSAGE,
@@ -103,16 +142,19 @@ towel_create_window(xcb_connection_t *conn)
   ev.data.data32[2] = 0;
   ev.data.data32[3] = 1;
 
+  xcb_map_window(win->conn, win->id);
+
   /* From ICCCM "Changing Window State" */
-  xcb_send_event (conn, 0, win->screen->root,
-                  XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY |
-                  XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT,
-                  (const char *)&ev);
+  xcb_send_event(win->conn, 0, win->screen->root,
+                 XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY |
+                 XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT,
+                 (const char *)&ev);
+}
 
-  xcb_flush(conn);
-
-  towel_window_init_cairo(win);
-  return win;
+static void
+towel_window_unmap(towel_window_t *win)
+{
+  xcb_unmap_window(win->conn, win->id);
 }
 
 static void
@@ -120,6 +162,7 @@ towel_window_destroy(towel_window_t *win)
 {
   cairo_surface_destroy(win->cs);
   cairo_destroy(win->cr);
+  xcb_destroy_window(win->conn, win->id);
   free(win);
 }
 
@@ -157,21 +200,39 @@ towel_window_render_time(towel_window_t *win, int timer)
   int min = timer / 60;
   int sec = timer % 60;
   char time_str[6];
+  int x, y, w, h;
   snprintf(time_str, sizeof(time_str), "%02d:%02d", min, sec);
-  cairo_select_font_face(cr, "Serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+  cairo_select_font_face(cr, "Serif",
+                         CAIRO_FONT_SLANT_NORMAL,
+                         CAIRO_FONT_WEIGHT_BOLD);
   cairo_set_font_size(cr, 120);
   cairo_text_extents(cr, "00:00", &extents);
+  x = (win->width - extents.width)/2;
+  y = (win->height - extents.height)/2+6;
+  w = extents.width;
+  h = extents.height;
   cairo_set_source_rgb(cr, .1, .1, .1);
-  cairo_move_to(cr,
-                (win->width - extents.width)/2,
-                (win->height - extents.height)/2+6);
+  cairo_move_to(cr, x, y);
   cairo_show_text(cr, time_str);
   cairo_set_source_rgb(cr, 1, 1, 1);
-  cairo_move_to(cr,
-                (win->width - extents.width)/2,
-                (win->height - extents.height)/2);
+  cairo_move_to(cr, x, y);
   cairo_show_text(cr, time_str);
   cairo_surface_flush(win->cs);
+}
+
+static void
+towel_window_update_working_time(towel_window_t *win, int period)
+{
+  xcb_screensaver_query_info_cookie_t cookie;
+  xcb_screensaver_query_info_reply_t *reply;
+  cookie = xcb_screensaver_query_info_unchecked(win->conn, win->screen->root);
+  reply = xcb_screensaver_query_info_reply(win->conn, cookie, NULL);
+#if DEBUG
+  fprintf(stderr, "idle: %d sec\n", ms2sec(reply->ms_since_user_input));
+#endif
+  win->idle_time = ms2sec(reply->ms_since_user_input);
+  if (win->idle_time < period)
+    win->working_time += period;
 }
 
 int
@@ -179,50 +240,50 @@ main(int argc, char *argv[])
 {
   /* TODO: Accept DISPLAY environment or --display arguments */
   xcb_connection_t *conn = xcb_connect(NULL, NULL);
-  towel_window_t *win = towel_create_window(conn);
-  uint32_t mask = XCB_CW_EVENT_MASK;
-  uint32_t values[] = {XCB_EVENT_MASK_EXPOSURE|XCB_EVENT_MASK_POINTER_MOTION};
-  int xfd = xcb_get_file_descriptor(conn);
-  struct pollfd ufd = { .fd = xfd, .events = POLLIN, };
-  int retval;
-  int timer = 5 * 60;
+  towel_window_t *win = NULL;
 
-  towel_window_hide_cursor(win);
-  xcb_change_window_attributes(conn, win->id, mask, values);
-  xcb_flush(conn);
-
-  xcb_generic_event_t *event;
-  int done = 0;
-  while (!done) {
-    retval = poll (&ufd, 1, 1000);
-    if (retval == -1)
-      perror("select()");
-    else if (retval) {
-      event = xcb_poll_for_event(conn);
-      if (event) switch (event->response_type & ~0x80) {
-      case XCB_EXPOSE:
-        towel_window_set_background_color(win);
-        towel_window_render_time(win, timer);
-        xcb_flush(conn);
-        break;
-      case XCB_MOTION_NOTIFY:
-        done = 1;
-        break;
-      default:
-        break;
-      }
-      free(event);
+  for (;;) {
+    if (win == NULL) {
+      win = towel_create_window(conn);
+      towel_window_hide_cursor(win);
     }
-    else {
-      /* TODO: Only redraw clipped region */
-      timer--;
-      towel_window_set_background_color(win);
-      towel_window_render_time(win, timer);
+    sleep(CHECK_PERIOD);
+    towel_window_update_working_time(win, CHECK_PERIOD);
+
+    /* TODO: grab all inputs */
+    if (win->working_time > WORKING_TIME) {
+      time_t prev = time(NULL);
+      towel_window_map(win);
       xcb_flush(conn);
+      for (;;) {
+        xcb_generic_event_t *event = xcb_wait_for_event(conn);
+        if ((event->response_type & ~0x80) == XCB_EXPOSE) {
+          towel_window_set_background_color(win);
+          towel_window_render_time(win, REST_TIME);
+          xcb_flush(conn);
+          break;
+        }
+        free(event);
+      }
+      for (;;) {
+        time_t now = time(NULL);
+        towel_window_set_background_color(win);
+        towel_window_render_time(win, REST_TIME - (now - prev));
+        xcb_flush(conn);
+        if (now - prev >= REST_TIME) {
+          towel_window_unmap(win);
+          towel_window_destroy(win);
+          win = NULL;
+          xcb_flush(conn);
+          break;
+        }
+        sleep(1);
+      }
     }
   }
 
-  towel_window_destroy(win);
+  if (win)
+    towel_window_destroy(win);
   xcb_disconnect(conn);
   return EXIT_SUCCESS;
 }

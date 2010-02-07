@@ -17,6 +17,7 @@ PKG_PROG_PKG_CONFIG
 # Checks for libraries.
 PKG_CHECK_MODULES(XCB, xcb)
 PKG_CHECK_MODULES(XCB_AUX, xcb-aux)
+PKG_CHECK_MODULES(XCB_SCR, xcb-screensaver)
 PKG_CHECK_MODULES(CAIRO, cairo)
 
 # Checks for header files.
