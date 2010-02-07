@@ -235,6 +235,31 @@ towel_window_update_working_time(towel_window_t *win, int period)
     win->working_time += period;
 }
 
+static void
+towel_window_grab_input(towel_window_t *win)
+{
+  xcb_grab_pointer_cookie_t pointer_cookie;
+  xcb_grab_keyboard_cookie_t keyboard_cookie;
+  xcb_grab_pointer_reply_t *pointer_reply;
+  xcb_grab_keyboard_reply_t *keyboard_reply;
+
+  pointer_cookie = xcb_grab_pointer_unchecked(win->conn, 0, win->id,
+                                              XCB_EVENT_MASK_NO_EVENT,
+                                              XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC,
+                                              win->id,
+                                              XCB_CURSOR_NONE, XCB_TIME_CURRENT_TIME);
+  keyboard_cookie = xcb_grab_keyboard_unchecked(win->conn, 0, win->id,
+                                                XCB_TIME_CURRENT_TIME,
+                                                XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC);
+  pointer_reply = xcb_grab_pointer_reply(win->conn, pointer_cookie, NULL);
+  keyboard_reply = xcb_grab_keyboard_reply(win->conn, keyboard_cookie, NULL);
+#if DEBUG
+  fprintf(stderr, "p: %d, k: %d\n", pointer_reply->status, keyboard_reply->status);
+#endif
+  free(pointer_reply);
+  free(keyboard_reply);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -250,7 +275,7 @@ main(int argc, char *argv[])
     sleep(CHECK_PERIOD);
     towel_window_update_working_time(win, CHECK_PERIOD);
 
-    /* TODO: grab all inputs */
+    /* TODO: option processing */
     if (win->working_time > WORKING_TIME) {
       time_t prev = time(NULL);
       towel_window_map(win);
@@ -258,6 +283,7 @@ main(int argc, char *argv[])
       for (;;) {
         xcb_generic_event_t *event = xcb_wait_for_event(conn);
         if ((event->response_type & ~0x80) == XCB_EXPOSE) {
+          towel_window_grab_input(win);
           towel_window_set_background_color(win);
           towel_window_render_time(win, REST_TIME);
           xcb_flush(conn);
