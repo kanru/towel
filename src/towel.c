@@ -292,11 +292,11 @@ main(int argc, char *argv[])
         free(event);
       }
       for (;;) {
-        time_t now = time(NULL);
+        int delta = time(NULL) - prev;
         towel_window_set_background_color(win);
-        towel_window_render_time(win, REST_TIME - (now - prev));
+        towel_window_render_time(win, REST_TIME - delta);
         xcb_flush(conn);
-        if (now - prev >= REST_TIME) {
+        if (delta >= REST_TIME) {
           towel_window_unmap(win);
           towel_window_destroy(win);
           win = NULL;
