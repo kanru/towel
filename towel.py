@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python2.6
 # -*- coding: utf-8 -*-
 def fmttime(t):
     ret = ''
@@ -21,7 +21,7 @@ def send_notify(t):
     notif = bus.get_object('org.freedesktop.Notifications', '/org/freedesktop/Notifications')
     notify = dbus.Interface(notif, 'org.freedesktop.Notifications')
     notify.Notify("Towel", 0,
-                  '/usr/share/icons/Tango/72x72/status/stock_dialog-warning.png',
+                  '/usr/share/icons/Tango/32x32/status/stock_dialog-warning.png',
                   "<span font='12.5' weight='bold'>休息一下</span>",
                   "<span font='14'>您己經盯著螢幕{0}了！</span>".format(fmttime(t)),
                   '', '', 10000)
@@ -30,10 +30,10 @@ def send_ok():
     notif = bus.get_object('org.freedesktop.Notifications', '/org/freedesktop/Notifications')
     notify = dbus.Interface(notif, 'org.freedesktop.Notifications')
     notify.Notify("Towel", 0,
-                  '/usr/share/icons/Tango/72x72/status/stock_dialog-info.png',
+                  '/usr/share/icons/Tango/32x32/status/stock_dialog-info.png',
                   "<span font='12.5' weight='bold'>時間到</span>",
                   "<span font='14'>休息夠了吧！上工！</span>",
-                  '', '', 0)
+                  '', '', 20*1000)
 
 def main():
     import time
