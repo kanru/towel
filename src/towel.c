@@ -268,6 +268,8 @@ main(int argc, char *argv[])
     }
     sleep(CHECK_PERIOD);
     towel_window_update_working_time(win, CHECK_PERIOD);
+    if (win->idle_time > REST_TIME)
+      win->working_time = 0;
 
     /* TODO: option processing */
     if (win->working_time > WORKING_TIME) {
