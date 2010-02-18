@@ -17,9 +17,9 @@
 
 /* time in seconds */
 #if DEBUG
-#define REST_TIME (60)
+#define REST_TIME (10)
 #define CHECK_PERIOD (REST_TIME / 2)
-#define WORKING_TIME (60)
+#define WORKING_TIME (10)
 #else
 #define REST_TIME (60*5)
 #define CHECK_PERIOD (REST_TIME / 2)
@@ -161,9 +161,8 @@ towel_window_destroy(towel_window_t *win)
 }
 
 static void
-towel_window_set_background_color(towel_window_t *win)
+towel_window_set_background_color(towel_window_t *win, cairo_t *cr)
 {
-  cairo_t *cr = win->cr;
   cairo_pattern_t* pat = cairo_pattern_create_linear(win->width/2, 0,
                                                      win->width/2, win->height);
   cairo_pattern_add_color_stop_rgb(pat, 0, .1, .1, .1);
@@ -171,7 +170,7 @@ towel_window_set_background_color(towel_window_t *win)
   cairo_set_source(cr, pat);
   cairo_rectangle(cr, 0, 0, win->width, win->height);
   cairo_fill(cr);
-  cairo_surface_flush(win->cs);
+  cairo_pattern_destroy(pat);
 }
 
 static void
@@ -189,12 +188,19 @@ towel_window_hide_cursor(towel_window_t *win)
 static void
 towel_window_render_time(towel_window_t *win, int timer)
 {
-  cairo_t *cr = win->cr;
+  cairo_surface_t *buf;
+  cairo_t *cr;
   cairo_text_extents_t extents;
   int min = timer / 60;
   int sec = timer % 60;
   char time_str[6];
   int x, y, w, h;
+
+  buf = cairo_surface_create_similar(win->cs, CAIRO_CONTENT_COLOR,
+                                     win->width, win->height);
+  cr = cairo_create(buf);
+  towel_window_set_background_color(win, cr);
+
   snprintf(time_str, sizeof(time_str), "%02d:%02d", min, sec);
   cairo_select_font_face(cr, "Serif",
                          CAIRO_FONT_SLANT_NORMAL,
@@ -206,11 +212,18 @@ towel_window_render_time(towel_window_t *win, int timer)
   w = extents.width;
   h = extents.height;
   cairo_set_source_rgb(cr, .1, .1, .1);
-  cairo_move_to(cr, x, y);
+  cairo_move_to(cr, x+2, y+2);
   cairo_show_text(cr, time_str);
   cairo_set_source_rgb(cr, 1, 1, 1);
   cairo_move_to(cr, x, y);
   cairo_show_text(cr, time_str);
+  cairo_surface_flush(buf);
+
+  cairo_set_source_surface(win->cr, buf, 0, 0);
+  cairo_paint(win->cr);
+  cairo_destroy(cr);
+  cairo_surface_destroy(buf);
+
   cairo_surface_flush(win->cs);
 }
 
@@ -282,7 +295,6 @@ main(int argc, char *argv[])
 #if !DEBUG
           towel_window_grab_input(win);
 #endif
-          towel_window_set_background_color(win);
           towel_window_render_time(win, REST_TIME);
           xcb_flush(conn);
           break;
@@ -291,7 +303,6 @@ main(int argc, char *argv[])
       }
       for (;;) {
         int delta = time(NULL) - prev;
-        towel_window_set_background_color(win);
         towel_window_render_time(win, REST_TIME - delta);
         xcb_flush(conn);
         if (delta >= REST_TIME) {
